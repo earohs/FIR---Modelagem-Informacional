@@ -9,13 +9,23 @@ CREATE TABLE Funcionario
 (
   ChaveFuncionario VARCHAR NOT NULL,
   IDFuncionario INT NOT NULL,
-  NomeFuncionario VARCHAR NOT NULL,
-  CategoriaFuncionario VARCHAR NOT NULL,
-  SalarioFuncionario money NOT NULL,
-  CNHMotorista VARCHAR,
-  CategoriaCNHMotorista VARCHAR,
-  PRIMARY KEY (ChaveFuncionario)
+  NomeFuncionario VARCHAR NOT NULL,          -- Tipo 1
+  CategoriaFuncionario VARCHAR NOT NULL,     -- Tipo 2
+  SalarioFuncionario money NOT NULL,         -- Tipo 2
+  CNHMotorista VARCHAR,                      -- Tipo 1
+  CategoriaCNHMotorista VARCHAR,             -- Tipo 1
+  VersaoFuncionario INT NOT NULL,
+  DataInicioFuncionario DATE NOT NULL,
+  DataFimFuncionario DATE,
+  CorrenteFuncionario CHAR(1) NOT NULL,
+  PRIMARY KEY (ChaveFuncionario),
+  UNIQUE (IDFuncionario, VersaoFuncionario),
+  CHECK (CorrenteFuncionario in ('S','N')),
+  CHECK (DataFimFuncionario is null or DataFimFuncionario >= DataInicioFuncionario)
 );
+
+-- indice que sustenta o join por faixa de vigencia usado pelos fatos
+CREATE INDEX ix_Funcionario_vigencia ON Funcionario (IDFuncionario, DataInicioFuncionario, DataFimFuncionario);
 
 CREATE TABLE Veiculo
 (
@@ -63,9 +73,7 @@ CREATE TABLE Calendario
 );
 
 /*****
-FatoDespesa - grao: 1 linha por evento de despesa (folha OU manutencao).
-TipoDespesa distingue a origem, no mesmo espirito de NomeCategoriaProduto /
-NomeFornecedorProduto que ficam "achatados" dentro da dimensao Produto.
+FatoDespesa - grao: 1 linha por evento de despesa.
 *****/
 CREATE TABLE FatoDespesa
 (
@@ -98,7 +106,7 @@ CREATE TABLE FatoReceitaPassagem
   StatusRota VARCHAR NOT NULL,
   ChaveCalendario VARCHAR NOT NULL,
   ChavePassageiro VARCHAR NOT NULL,
-  ChaveFuncionario VARCHAR NOT NULL,  -- motorista da rota
+  ChaveFuncionario VARCHAR NOT NULL,  -- motorista da rota, na versao vigente na data da rota
   ChaveVeiculo VARCHAR NOT NULL,
   ChaveEnderecoOrigem VARCHAR NOT NULL,
   ChaveEnderecoDestino VARCHAR NOT NULL,
@@ -130,7 +138,7 @@ CREATE TABLE FatoRota
   ChaveCalendarioInicio VARCHAR NOT NULL,
   ChaveCalendarioFim VARCHAR,
   ChaveVeiculo VARCHAR NOT NULL,
-  ChaveFuncionario VARCHAR NOT NULL, -- motorista
+  ChaveFuncionario VARCHAR NOT NULL, -- motorista, na versao vigente na data da rota
   ChaveEnderecoOrigem VARCHAR NOT NULL,
   ChaveEnderecoDestino VARCHAR NOT NULL,
   PRIMARY KEY (IDRota),
@@ -161,3 +169,14 @@ CREATE TABLE FatoSugestaoRota
   FOREIGN KEY (ChavePassageiro) REFERENCES Passageiro(ChavePassageiro),
   FOREIGN KEY (ChaveEndereco) REFERENCES Endereco(ChaveEndereco)
 );
+
+
+create or replace view dw_fir.FuncionarioCorrente as
+select
+	ChaveFuncionario, IDFuncionario, NomeFuncionario, CategoriaFuncionario,
+	SalarioFuncionario, CNHMotorista, CategoriaCNHMotorista,
+	VersaoFuncionario, DataInicioFuncionario
+from
+	dw_fir.Funcionario
+where
+	CorrenteFuncionario='S';

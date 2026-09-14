@@ -31,8 +31,6 @@ delete from Endereco;
 delete from Veiculo;
 delete from Funcionario;
 
-\echo Carga da dimensao Funcionario
-\echo Repare que um funcionario so preenche uma das duas tabelas (especializacao disjunta)
 
 select
 	gen_random_uuid(),
@@ -41,7 +39,11 @@ select
 	case f.FuncionarioCategoria when 'A' then 'Administrativo' else 'Motorista' end,
 	f.FuncionarioSalario,
 	m.MotoristaCNH,
-	m.MotoristaCategoriaCNH
+	m.MotoristaCategoriaCNH,
+	1,
+	cast('1900-01-01' as date),
+	null,
+	'S'
 from
 	oper_fir.Funcionario f left join oper_fir.Motorista m on m.FuncionarioID=f.FuncionarioID
 	left join oper_fir.Administrativo a on a.FuncionarioID=f.FuncionarioID;
@@ -54,7 +56,11 @@ select
 	case f.FuncionarioCategoria when 'A' then 'Administrativo' else 'Motorista' end,
 	f.FuncionarioSalario,
 	m.MotoristaCNH,
-	m.MotoristaCategoriaCNH
+	m.MotoristaCategoriaCNH,
+	1,
+	cast('1900-01-01' as date),
+	null,
+	'S'
 from
 	oper_fir.Funcionario f left join oper_fir.Motorista m on m.FuncionarioID=f.FuncionarioID
 	left join oper_fir.Administrativo a on a.FuncionarioID=f.FuncionarioID;
@@ -133,6 +139,7 @@ from (
 \echo Fato Despesa - une pagamento de funcionario e manutencao de veiculo
 \echo repare no LEFT JOIN dos dois lados: cada linha só preenche funcionario OU veiculo
 
+
 INSERT INTO dw_fir.FatoDespesa
 select
 	pg.PagamentoID,
@@ -147,6 +154,8 @@ select
 from
 	oper_fir.PagamentoFuncionario pg inner join oper_fir.Funcionario f on f.FuncionarioID=pg.FuncionarioID
 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=pg.FuncionarioID
+		and pg.PagamentoData >= dwf.DataInicioFuncionario
+		and (dwf.DataFimFuncionario is null or pg.PagamentoData < dwf.DataFimFuncionario)
 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(pg.PagamentoData as date)
 union all
 select
@@ -165,6 +174,7 @@ from
 
 \echo Fato Receita Passagem - 1 linha por passageiro embarcado em uma rota
 \echo StatusRota calculado com subquery correlacionada em oper_fir.AvisoRota
+\echo o motorista tambem entra pela versao vigente na data de inicio da rota
 
 INSERT INTO dw_fir.FatoReceitaPassagem
 select
@@ -190,6 +200,8 @@ from
 	oper_fir.RotaPassageiro rp inner join oper_fir.Rota r on r.RotaID=rp.RotaID
 	inner join dw_fir.Passageiro dwp on dwp.IDPassageiro=rp.PassageiroID
 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=r.MotoristaID
+		and cast(r.RotaInicio as date) >= dwf.DataInicioFuncionario
+		and (dwf.DataFimFuncionario is null or cast(r.RotaInicio as date) < dwf.DataFimFuncionario)
 	inner join dw_fir.Veiculo dwv on dwv.IDVeiculo=r.VeiculoID
 	inner join dw_fir.Endereco dweo on dweo.IDEndereco=r.EnderecoOrigemID
 	inner join dw_fir.Endereco dwed on dwed.IDEndereco=r.EnderecoDestinoID
@@ -231,6 +243,8 @@ from
 	           from oper_fir.AvisoRota group by RotaID) av on av.RotaID=r.RotaID
 	inner join dw_fir.Veiculo dwv on dwv.IDVeiculo=r.VeiculoID
 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=r.MotoristaID
+		and cast(r.RotaInicio as date) >= dwf.DataInicioFuncionario
+		and (dwf.DataFimFuncionario is null or cast(r.RotaInicio as date) < dwf.DataFimFuncionario)
 	inner join dw_fir.Endereco dweo on dweo.IDEndereco=r.EnderecoOrigemID
 	inner join dw_fir.Endereco dwed on dwed.IDEndereco=r.EnderecoDestinoID
 	inner join dw_fir.Calendario dwcalini on dwcalini.DataCompleta=cast(r.RotaInicio as date)
@@ -256,7 +270,6 @@ from
 
 ---- validando ....
 
-\echo confira as contagens abaixo contra a quantidade de linhas das tabelas de origem
 
 select count(*) as despesas from dw_fir.FatoDespesa;
 select count(*) as receitas from dw_fir.FatoReceitaPassagem;
@@ -274,3 +287,14 @@ select
 	IDRota, IDPassageiro, ValorPago
 from
 	dw_fir.FatoReceitaPassagem;
+
+
+select IDFuncionario, count(*) as qtd_versoes, count(*) filter (where CorrenteFuncionario='S') as qtd_correntes
+from dw_fir.Funcionario group by IDFuncionario order by IDFuncionario;
+
+
+select IDFuncionario from dw_fir.Funcionario where CorrenteFuncionario='S'
+group by IDFuncionario having count(*) > 1;
+
+select count(*) as pagamentos_origem from oper_fir.PagamentoFuncionario;
+select count(*) as pagamentos_no_fato from dw_fir.FatoDespesa where TipoDespesa='Pagamento Funcionario';

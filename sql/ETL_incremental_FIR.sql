@@ -2,8 +2,6 @@
 
 PARTE INCREMENTAL
 
-https://bryteflow.com/postgres-cdc-6-easy-methods-capture-data-changes/#:~:text=5.,%2DAhead%20Log%20(WAL).
-
 ****/
 
 Drop schema if exists audit cascade;
@@ -14,14 +12,14 @@ set search_path=audit;
 -- Gravar as alterações em uma tabela (log geral, para toda a base oper_fir)
 ****/
 create table audit.historico_mudancas_fir (
-schema_name text not null,
-table_name text not null,
-user_name text,
-action_tstamp timestamp with time zone not null default current_timestamp,
-action TEXT NOT NULL check (action in ('I','D','U')),
-original_data text,
-new_data text,
-query text
+	schema_name text not null,
+	table_name text not null,
+	user_name text,
+	action_tstamp timestamp with time zone not null default current_timestamp,
+	action TEXT NOT NULL check (action in ('I','D','U')),
+	original_data text,
+	new_data text,
+	query text
 ) with (fillfactor=100);
 
 /***
@@ -119,7 +117,6 @@ FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func();
 
 /***
 Trigger para salvar inserções da tabela PagamentoFuncionario
-(tabela "espelho" só com INSERT, usada depois para alimentar o fato)
 ***/
 
 Create table audit.ins_PagamentoFuncionario as select * from oper_fir.PagamentoFuncionario where 1=0;
@@ -268,9 +265,7 @@ CREATE TRIGGER SugestaoRota_insert_trg
 AFTER INSERT ON oper_fir.SugestaoRota
 FOR EACH ROW EXECUTE PROCEDURE audit.ins_SugestaoRota_func();
 
--- Funcionario, Veiculo, Passageiro e Endereco - exemplos de dimensao
--- (o log geral já existe pelas triggers *_if_modified_trg criadas acima;
---  falta apenas a tabela espelho para pegar só as linhas novas)
+-- Funcionario, Veiculo, Passageiro e Endereco 
 
 Create table audit.ins_Funcionario as select * from oper_fir.Funcionario where 1=0;
 
@@ -376,26 +371,125 @@ CREATE TRIGGER Endereco_insert_trg
 AFTER INSERT ON oper_fir.Endereco
 FOR EACH ROW EXECUTE PROCEDURE audit.ins_Endereco_func();
 
+/***
+Update - Implementação de casos de dimensões do Tipo 2
+***/
+
+Create table audit.upd_Funcionario as
+select *, current_timestamp as FuncionarioDataMudanca from oper_fir.Funcionario where 1=0;
+
+CREATE OR REPLACE FUNCTION audit.upd_Funcionario_func() RETURNS trigger AS $body$
+BEGIN
+if (TG_OP = 'UPDATE') then
+insert into audit.upd_Funcionario values (NEW.FuncionarioID,NEW.FuncionarioNome,NEW.FuncionarioCPF,NEW.FuncionarioSalario,NEW.FuncionarioCategoria,current_timestamp);
+RETURN NEW;
+else
+RAISE WARNING '[AUDIT.UPD_FUNCIONARIO_FUNC] - Other action occurred: %, at %',TG_OP,now();
+RETURN NULL;
+end if;
+
+EXCEPTION
+WHEN others THEN
+RAISE WARNING '[AUDIT.UPD_FUNCIONARIO_FUNC] - UDF ERROR [OTHER] - SQLSTATE: %, SQLERRM: %',SQLSTATE,SQLERRM;
+RETURN NULL;
+END;
+$body$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit;
+
+CREATE TRIGGER Funcionario_update_trg
+AFTER UPDATE ON oper_fir.Funcionario
+FOR EACH ROW EXECUTE PROCEDURE audit.upd_Funcionario_func();
+
+
+Create table audit.ins_Veiculo as select * from oper_fir.Veiculo where 1=0;
+
+CREATE OR REPLACE FUNCTION audit.ins_Veiculo_func() RETURNS trigger AS $body$
+BEGIN
+if (TG_OP = 'INSERT') then
+insert into audit.ins_Veiculo values (NEW.VeiculoID,NEW.VeiculoPlaca,NEW.VeiculoTipo,NEW.VeiculoDescricao);
+RETURN NEW;
+else
+RAISE WARNING '[AUDIT.IF_MODIFIED_FUNC] - Other action occurred: %, at %',TG_OP,now();
+RETURN NULL;
+end if;
+
+EXCEPTION
+WHEN others THEN
+RAISE WARNING '[AUDIT.IF_MODIFIED_FUNC] - UDF ERROR [OTHER] - SQLSTATE: %, SQLERRM: %',SQLSTATE,SQLERRM;
+RETURN NULL;
+END;
+$body$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit;
+
+CREATE TRIGGER Veiculo_insert_trg
+AFTER INSERT ON oper_fir.Veiculo
+FOR EACH ROW EXECUTE PROCEDURE audit.ins_Veiculo_func();
+
+Create table audit.ins_Passageiro as select * from oper_fir.Passageiro where 1=0;
+
+CREATE OR REPLACE FUNCTION audit.ins_Passageiro_func() RETURNS trigger AS $body$
+BEGIN
+if (TG_OP = 'INSERT') then
+insert into audit.ins_Passageiro values (NEW.PassageiroID,NEW.PassageiroNome,NEW.PassageiroCPF,NEW.PassageiroDataNascimento,NEW.PassageiroFormaPagamento);
+RETURN NEW;
+else
+RAISE WARNING '[AUDIT.IF_MODIFIED_FUNC] - Other action occurred: %, at %',TG_OP,now();
+RETURN NULL;
+end if;
+
+EXCEPTION
+WHEN others THEN
+RAISE WARNING '[AUDIT.IF_MODIFIED_FUNC] - UDF ERROR [OTHER] - SQLSTATE: %, SQLERRM: %',SQLSTATE,SQLERRM;
+RETURN NULL;
+END;
+$body$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit;
+
+CREATE TRIGGER Passageiro_insert_trg
+AFTER INSERT ON oper_fir.Passageiro
+FOR EACH ROW EXECUTE PROCEDURE audit.ins_Passageiro_func();
+
+Create table audit.ins_Endereco as select * from oper_fir.Endereco where 1=0;
+
+CREATE OR REPLACE FUNCTION audit.ins_Endereco_func() RETURNS trigger AS $body$
+BEGIN
+if (TG_OP = 'INSERT') then
+insert into audit.ins_Endereco values (NEW.EnderecoID,NEW.EnderecoCEP,NEW.EnderecoLogradouro,NEW.EnderecoNumero,NEW.EnderecoMunicipio,NEW.EnderecoUF,NEW.EnderecoPontoReferencia);
+RETURN NEW;
+else
+RAISE WARNING '[AUDIT.IF_MODIFIED_FUNC] - Other action occurred: %, at %',TG_OP,now();
+RETURN NULL;
+end if;
+
+EXCEPTION
+WHEN others THEN
+RAISE WARNING '[AUDIT.IF_MODIFIED_FUNC] - UDF ERROR [OTHER] - SQLSTATE: %, SQLERRM: %',SQLSTATE,SQLERRM;
+RETURN NULL;
+END;
+$body$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit;
+
+CREATE TRIGGER Endereco_insert_trg
+AFTER INSERT ON oper_fir.Endereco
+FOR EACH ROW EXECUTE PROCEDURE audit.ins_Endereco_func();
+
 
 /****
-Apagar o trigger no caso de começar do zero:
-
 DROP TRIGGER Rota_if_modified_trg on oper_fir.Rota;
+DROP TRIGGER Funcionario_update_trg on oper_fir.Funcionario;
 *****/
 
--- TESTE EXEMPLO
--- registro de nova manutencao, novo pagamento e rota nova com um passageiro embarcado
+-- registrar uma nova manutencao, um novo pagamento e uma rota nova
+-- com um passageiro embarcado
 
-/*
-Veiculo
- 1 | RJA1B23 (Onibus)
-
-Funcionario
- 2 | Bruno Lima (Motorista)
-
-Passageiro
- 1 | Diego Alves
-*/
 
 INSERT INTO oper_fir.Manutencao (VeiculoID,ManutencaoData,ManutencaoDescricao,ManutencaoValorDespesa)
 SELECT 1,'2025-07-10','Troca de pneus',1500
@@ -421,21 +515,44 @@ WHERE NOT EXISTS (
   SELECT 1 FROM oper_fir.RotaPassageiro WHERE RotaID=3 AND PassageiroID=1
 );
 
--- Cliente novo - exemplo de dimensao (Passageiro, no caso da FIR)
+-- Cliente novo - exemplo de dimensao
 
 INSERT INTO oper_fir.Passageiro (PassageiroNome,PassageiroCPF,PassageiroDataNascimento,PassageiroFormaPagamento)
 VALUES ('Manuela Prado','66666666666','1995-03-20','DEBITO');
 
 
-/*****
+/**
+Mudanças para vizualizarmos o que acontece com o tipo 2
+**/
 
+UPDATE oper_fir.Funcionario SET FuncionarioSalario = 4560
+WHERE FuncionarioID = 2 AND FuncionarioSalario <> 4560::money;
+
+UPDATE oper_fir.Funcionario SET FuncionarioCategoria = 'A'
+WHERE FuncionarioID = 3 AND FuncionarioCategoria <> 'A';
+
+INSERT INTO oper_fir.Administrativo (FuncionarioID,AdministrativoSetor,AdministrativoRamal)
+SELECT 3,'Operacoes','2015'
+WHERE NOT EXISTS (SELECT 1 FROM oper_fir.Administrativo WHERE FuncionarioID=3);
+-- a linha de Carla em oper_fir.Motorista permanece: a FIR mantem o registro da
+-- CNH mesmo depois da transferencia de setor.
+
+UPDATE oper_fir.Funcionario SET FuncionarioNome = 'Ana Souza Ribeiro'
+WHERE FuncionarioID = 1 AND FuncionarioNome <> 'Ana Souza Ribeiro';
+
+-- pagamento feito DEPOIS do aumento, para conferir se o fato vai se ligar a
+-- versao nova (e nao a antiga) do Bruno
+
+INSERT INTO oper_fir.PagamentoFuncionario (FuncionarioID,PagamentoData,PagamentoValorPago,PagamentoValorImposto)
+SELECT 2,current_date,4560,775
+WHERE NOT EXISTS (
+  SELECT 1 FROM oper_fir.PagamentoFuncionario WHERE FuncionarioID=2 AND PagamentoData=current_date
+);
+
+
+/**
 Atualizar calendário
-
-repete a mesma instrução da carga inicial
-
-O resultado esperado é apenas a data das transações inserida depois da carga inicial
-
-******/
+**/
 
 insert into dw_fir.Calendario
 select
@@ -467,7 +584,7 @@ from (
 	) as a;
 
 -- Atualizar dimensão Passageiro
--- MODO 1 apenas, devido à surrogate key
+-- MODO 1 apenas, devido à surrogate key (mesma observação da ZAGI para Cliente)
 
 INSERT INTO dw_fir.Passageiro
 select
@@ -482,7 +599,10 @@ from
 
 truncate table audit.ins_Passageiro;
 
--- Atualizar dimensão Funcionario, Veiculo e Endereco (mesma logica: só o que é novo)
+
+\echo PASSO 1 - funcionarios novos entram como versao 1
+\echo DataInicio = 1900-01-01, a mesma sentinela da carga inicial, para que um
+\echo fato com data anterior ao cadastro ainda encontre a versao 1 no join
 
 INSERT INTO dw_fir.Funcionario
 select
@@ -492,11 +612,92 @@ select
 	case f.FuncionarioCategoria when 'A' then 'Administrativo' else 'Motorista' end,
 	f.FuncionarioSalario,
 	m.MotoristaCNH,
-	m.MotoristaCategoriaCNH
+	m.MotoristaCategoriaCNH,
+	1,
+	cast('1900-01-01' as date),
+	null,
+	'S'
 from
 	audit.ins_Funcionario f left join oper_fir.Motorista m on m.FuncionarioID=f.FuncionarioID;
 
 truncate table audit.ins_Funcionario;
+
+\echo PASSO 2 - abre a nova versao para quem teve Salario ou Categoria alterados
+\echo o DISTINCT ON garante que, se o funcionario foi alterado varias vezes no
+\echo mesmo ciclo, so a ultima situacao vire versao (o DW nao precisa guardar
+\echo os estados intermediarios de um mesmo lote)
+\echo o WHERE compara o valor novo com o da versao corrente: um UPDATE que nao
+\echo mexeu em nenhum dos dois atributos Tipo 2 nao pode gerar versao nova
+
+INSERT INTO dw_fir.Funcionario
+select
+	gen_random_uuid(),
+	m.FuncionarioID,
+	m.FuncionarioNome,
+	m.CategoriaNova,
+	m.FuncionarioSalario,
+	mot.MotoristaCNH,
+	mot.MotoristaCategoriaCNH,
+	dwf.VersaoFuncionario + 1,
+	m.DataMudanca,
+	null,
+	'S'
+from
+	(select distinct on (FuncionarioID)
+		FuncionarioID,
+		FuncionarioNome,
+		FuncionarioSalario,
+		case FuncionarioCategoria when 'A' then 'Administrativo' else 'Motorista' end as CategoriaNova,
+		cast(FuncionarioDataMudanca as date) as DataMudanca
+	 from audit.upd_Funcionario
+	 order by FuncionarioID, FuncionarioDataMudanca desc) m
+	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=m.FuncionarioID and dwf.CorrenteFuncionario='S'
+	left join oper_fir.Motorista mot on mot.FuncionarioID=m.FuncionarioID
+where
+	m.FuncionarioSalario <> dwf.SalarioFuncionario
+	or m.CategoriaNova <> dwf.CategoriaFuncionario;
+
+\echo PASSO 2b - fecha a versao anterior de quem acabou de ganhar versao nova
+\echo vigencia em intervalo semiaberto: DataFim da versao antiga = DataInicio da
+\echo nova, sem sobreposicao e sem buraco entre as duas
+
+update dw_fir.Funcionario ant
+set
+	DataFimFuncionario = nova.DataInicioFuncionario,
+	CorrenteFuncionario = 'N'
+from
+	dw_fir.Funcionario nova
+where
+	nova.IDFuncionario = ant.IDFuncionario
+	and nova.VersaoFuncionario = ant.VersaoFuncionario + 1
+	and ant.CorrenteFuncionario = 'S';
+
+\echo PASSO 3 - atributos Tipo 1 sobrescrevem TODAS as versoes do funcionario
+\echo e aqui que Nome e CNH sao corrigidos; repare que nenhuma versao e criada
+
+update dw_fir.Funcionario dwf
+set
+	NomeFuncionario = f.FuncionarioNome,
+	CNHMotorista = mot.MotoristaCNH,
+	CategoriaCNHMotorista = mot.MotoristaCategoriaCNH
+from
+	oper_fir.Funcionario f left join oper_fir.Motorista mot on mot.FuncionarioID=f.FuncionarioID
+where
+	f.FuncionarioID = dwf.IDFuncionario
+	and dwf.IDFuncionario in (select FuncionarioID from audit.upd_Funcionario);
+
+truncate table audit.upd_Funcionario;
+
+\echo confira o resultado do SCD2 - Bruno (2) e Carla (3) devem ter 2 versoes,
+\echo a antiga com CorrenteFuncionario='N' e DataFim preenchida
+
+select
+	IDFuncionario, NomeFuncionario, CategoriaFuncionario, SalarioFuncionario,
+	VersaoFuncionario, DataInicioFuncionario, DataFimFuncionario, CorrenteFuncionario
+from dw_fir.Funcionario
+order by IDFuncionario, VersaoFuncionario;
+
+-- Atualizar dimensão Veiculo e Endereco (Tipo 1 puro: só o que é novo entra)
 
 INSERT INTO dw_fir.Veiculo
 select gen_random_uuid(), v.VeiculoID, v.VeiculoPlaca,
@@ -513,12 +714,8 @@ from audit.ins_Endereco e;
 truncate table audit.ins_Endereco;
 
 -- atualização do fato despesa
--- tomar nota da quantidade de linhas
 
 select * from dw_fir.FatoDespesa;
-
--- só funciona se as tabelas espelho (audit.ins_PagamentoFuncionario / audit.ins_Manutencao)
--- ainda tiverem as linhas novas (por isso truncamos só depois de carregar)
 
 -- MODO 1 - rápido, apenas novas transações das tabelas de auditoria
 
@@ -536,6 +733,8 @@ select
 from
 	audit.ins_PagamentoFuncionario pg inner join oper_fir.Funcionario f on f.FuncionarioID=pg.FuncionarioID
 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=pg.FuncionarioID
+		and pg.PagamentoData >= dwf.DataInicioFuncionario
+		and (dwf.DataFimFuncionario is null or pg.PagamentoData < dwf.DataFimFuncionario)
 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(pg.PagamentoData as date);
 
 insert into dw_fir.FatoDespesa
@@ -553,26 +752,13 @@ from
 	audit.ins_Manutencao mn inner join dw_fir.Veiculo dwv on dwv.IDVeiculo=mn.VeiculoID
 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(mn.ManutencaoData as date);
 
--- MODO 2 - lento, a diferença entre a base OPER e o DW - opção mais pesada
-
--- select
--- 	pg.PagamentoID, 'Pagamento Funcionario', 'Pagamento de salario - ' || f.FuncionarioNome,
--- 	pg.PagamentoValorPago + pg.PagamentoValorImposto, pg.PagamentoValorPago, pg.PagamentoValorImposto,
--- 	dwcal.ChaveCalendario, dwf.ChaveFuncionario, null
--- from
--- 	oper_fir.PagamentoFuncionario pg inner join oper_fir.Funcionario f on f.FuncionarioID=pg.FuncionarioID
--- 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=pg.FuncionarioID
--- 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(pg.PagamentoData as date)
--- EXCEPT
--- SELECT IDOrigemDespesa, TipoDespesa, DescricaoDespesa, ValorDespesa, ValorLiquido, ValorImposto,
---        ChaveCalendario, ChaveFuncionario, ChaveVeiculo
--- FROM dw_fir.FatoDespesa WHERE TipoDespesa='Pagamento Funcionario';
 
 truncate table audit.ins_PagamentoFuncionario;
 truncate table audit.ins_Manutencao;
 
 -- atualização do fato receita passagem e do fato rota
 -- ambos dependem de Rota + RotaPassageiro + AvisoRota
+-- o motorista entra pela versao vigente na data de inicio da rota
 
 insert into dw_fir.FatoReceitaPassagem
 select
@@ -598,6 +784,8 @@ from
 	audit.ins_RotaPassageiro rp inner join oper_fir.Rota r on r.RotaID=rp.RotaID
 	inner join dw_fir.Passageiro dwp on dwp.IDPassageiro=rp.PassageiroID
 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=r.MotoristaID
+		and cast(r.RotaInicio as date) >= dwf.DataInicioFuncionario
+		and (dwf.DataFimFuncionario is null or cast(r.RotaInicio as date) < dwf.DataFimFuncionario)
 	inner join dw_fir.Veiculo dwv on dwv.IDVeiculo=r.VeiculoID
 	inner join dw_fir.Endereco dweo on dweo.IDEndereco=r.EnderecoOrigemID
 	inner join dw_fir.Endereco dwed on dwed.IDEndereco=r.EnderecoDestinoID
@@ -605,13 +793,7 @@ from
 
 truncate table audit.ins_RotaPassageiro;
 
-/****
-Atenção: FatoRota é um snapshot que precisa ser recriado sempre que a rota
-muda (por exemplo quando RotaFim é preenchido depois, ou quando chega um
-aviso de atraso/cancelamento). A tabela espelho audit.ins_Rota só guarda
-o INSERT original da rota; por isso apagamos a linha antiga do fato antes
-de inserir a versão atual, lendo direto de oper_fir (e não do espelho).
-****/
+
 
 delete from dw_fir.FatoRota
 where IDRota in (select RotaID from audit.ins_Rota)
@@ -650,6 +832,8 @@ from
 	           from oper_fir.AvisoRota group by RotaID) av on av.RotaID=r.RotaID
 	inner join dw_fir.Veiculo dwv on dwv.IDVeiculo=r.VeiculoID
 	inner join dw_fir.Funcionario dwf on dwf.IDFuncionario=r.MotoristaID
+		and cast(r.RotaInicio as date) >= dwf.DataInicioFuncionario
+		and (dwf.DataFimFuncionario is null or cast(r.RotaInicio as date) < dwf.DataFimFuncionario)
 	inner join dw_fir.Endereco dweo on dweo.IDEndereco=r.EnderecoOrigemID
 	inner join dw_fir.Endereco dwed on dwed.IDEndereco=r.EnderecoDestinoID
 	inner join dw_fir.Calendario dwcalini on dwcalini.DataCompleta=cast(r.RotaInicio as date)
@@ -680,13 +864,45 @@ from
 truncate table audit.ins_SugestaoRota;
 
 
---- montar as consultas para os fatos (igual ao FatoVendas da ZAGI)
+/******
+Validações do tipo 2 - rode sempre depois do incremental
+******/
+
+select IDFuncionario, count(*) from dw_fir.Funcionario
+where CorrenteFuncionario='S' group by IDFuncionario having count(*) > 1;
+
+select IDFuncionario, VersaoFuncionario from dw_fir.Funcionario
+where (CorrenteFuncionario='S' and DataFimFuncionario is not null)
+   or (CorrenteFuncionario='N' and DataFimFuncionario is null);
+
+select a.IDFuncionario, a.VersaoFuncionario, b.VersaoFuncionario
+from dw_fir.Funcionario a inner join dw_fir.Funcionario b
+	on b.IDFuncionario=a.IDFuncionario and b.VersaoFuncionario > a.VersaoFuncionario
+where
+	b.DataInicioFuncionario < coalesce(a.DataFimFuncionario, cast('9999-12-31' as date))
+	and a.DataInicioFuncionario < coalesce(b.DataFimFuncionario, cast('9999-12-31' as date));
+
+select count(*) as pagamentos_origem from oper_fir.PagamentoFuncionario;
+select count(*) as pagamentos_no_fato from dw_fir.FatoDespesa where TipoDespesa='Pagamento Funcionario';
+
+select
+	fd.IDOrigemDespesa, c.DataCompleta as data_pagamento, fd.ValorLiquido as valor_pago,
+	f.NomeFuncionario, f.VersaoFuncionario, f.SalarioFuncionario as salario_na_versao
+from
+	dw_fir.FatoDespesa fd inner join dw_fir.Funcionario f on f.ChaveFuncionario=fd.ChaveFuncionario
+	inner join dw_fir.Calendario c on c.ChaveCalendario=fd.ChaveCalendario
+where fd.TipoDespesa='Pagamento Funcionario'
+order by f.IDFuncionario, c.DataCompleta;
+
+
+--- montar as consultas para os fatos
 
 create or replace view dw_fir.FatoDespesas as
 select
 	fd.TipoDespesa, fd.DescricaoDespesa, fd.ValorDespesa, fd.ValorLiquido, fd.ValorImposto,
 	c.Ano, c.DataCompleta, c.Mes, c.Trimestre,
-	f.NomeFuncionario, f.CategoriaFuncionario,
+	f.NomeFuncionario, f.CategoriaFuncionario, f.SalarioFuncionario,
+	f.VersaoFuncionario, f.CorrenteFuncionario,
 	v.PlacaVeiculo, v.TipoVeiculo
 from
 	dw_fir.FatoDespesa fd inner join dw_fir.Calendario c on c.ChaveCalendario=fd.ChaveCalendario
@@ -698,7 +914,7 @@ select
 	fr.HoraPagamento, fr.ValorPago, fr.ValorTabela, fr.ValorDesconto, fr.StatusRota,
 	c.Ano, c.DataCompleta, c.Mes, c.Trimestre,
 	p.NomePassageiro, p.FormaPagamentoPassageiro,
-	f.NomeFuncionario as NomeMotorista,
+	f.NomeFuncionario as NomeMotorista, f.VersaoFuncionario as VersaoMotorista,
 	v.PlacaVeiculo,
 	eo.MunicipioEndereco as MunicipioOrigem, ed.MunicipioEndereco as MunicipioDestino
 from
@@ -715,7 +931,7 @@ select
 	fr.DuracaoMinutos, fr.QtdAvisosAtraso, fr.QtdAvisosCancelamento,
 	c.Ano, c.DataCompleta,
 	v.PlacaVeiculo, v.TipoVeiculo,
-	f.NomeFuncionario as NomeMotorista
+	f.NomeFuncionario as NomeMotorista, f.VersaoFuncionario as VersaoMotorista
 from
 	dw_fir.FatoRota fr inner join dw_fir.Calendario c on c.ChaveCalendario=fr.ChaveCalendarioInicio
 	inner join dw_fir.Veiculo v on v.ChaveVeiculo=fr.ChaveVeiculo

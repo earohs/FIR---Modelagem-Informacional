@@ -12,7 +12,7 @@ cd sql/
 createdb fir_dw
 ```
 
-#### 2. schema de origem (oper_fir) - DML
+#### 2. schema de origem (oper_fir) - DDL
 ```
 psql -d fir_dw -v ON_ERROR_STOP=1 -f DDL_oper_FIR_PT_BR.sql
 ```

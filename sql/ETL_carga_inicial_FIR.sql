@@ -1,11 +1,4 @@
-/************************************************************            
-						ATENÇÃO!
-Por favor, leia cuidadosamente todo o código antes de executá-lo.
 
-1. Rode o script em partes e valide cada ponto.
-2. Leia as referências passadas como comentários.
-
-************************************************************/
 /*****
 
 Rode apenas depois de rodar os scripts:
@@ -22,7 +15,7 @@ set search_path=dw_fir;
 -- Truncar todas as tabelas do DW, caso já existam (fatos primeiro, por causa das FKs)
 
 truncate table FatoDespesa;
-truncate table FatoReceitaPassagem;
+truncate table FatoReceita;
 truncate table FatoRota;
 truncate table FatoSugestaoRota;
 delete from Calendario;
@@ -131,7 +124,6 @@ from (
 	) as a;
 
 \echo Fato Despesa - une pagamento de funcionario e manutencao de veiculo
-\echo repare no LEFT JOIN dos dois lados: cada linha só preenche funcionario OU veiculo
 
 INSERT INTO dw_fir.FatoDespesa
 select
@@ -166,7 +158,7 @@ from
 \echo Fato Receita Passagem - 1 linha por passageiro embarcado em uma rota
 \echo StatusRota calculado com subquery correlacionada em oper_fir.AvisoRota
 
-INSERT INTO dw_fir.FatoReceitaPassagem
+INSERT INTO dw_fir.FatoReceita
 select
 	rp.RotaID,
 	rp.PassageiroID,

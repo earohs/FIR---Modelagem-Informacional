@@ -87,7 +87,7 @@ CREATE TABLE FatoDespesa
 /*****
 FatoReceitaPassagem - grao: 1 linha por passageiro embarcado em uma rota.
 *****/
-CREATE TABLE FatoReceitaPassagem
+CREATE TABLE FatoReceita
 (
   IDRota INT NOT NULL,
   IDPassageiro INT NOT NULL,

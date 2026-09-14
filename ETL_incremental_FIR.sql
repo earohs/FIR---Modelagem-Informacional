@@ -27,7 +27,7 @@ query text
 /***
 
 Função de trigger para gravar as alterações de forma geral
-(a mesma função usada na base ZAGI, reaproveitada aqui)
+(a mesma função usada na base ZAGI)
 
 ****/
 
@@ -378,13 +378,13 @@ FOR EACH ROW EXECUTE PROCEDURE audit.ins_Endereco_func();
 
 
 /****
-Para o caso de começar do zero, como apagar a trigger?
+Apagar o trigger no caso de começar do zero:
 
 DROP TRIGGER Rota_if_modified_trg on oper_fir.Rota;
 *****/
 
--- vamos registrar uma nova manutencao, um novo pagamento e uma rota nova
--- com um passageiro embarcado
+-- TESTE EXEMPLO
+-- registro de nova manutencao, novo pagamento e rota nova com um passageiro embarcado
 
 /*
 Veiculo
@@ -433,7 +433,7 @@ Atualizar calendário
 
 repete a mesma instrução da carga inicial
 
-O resultado esperado é apenas a data das transações que você inseriu depois da carga inicial
+O resultado esperado é apenas a data das transações inserida depois da carga inicial
 
 ******/
 
@@ -467,7 +467,7 @@ from (
 	) as a;
 
 -- Atualizar dimensão Passageiro
--- MODO 1 apenas, devido à surrogate key (mesma observação da ZAGI para Cliente)
+-- MODO 1 apenas, devido à surrogate key
 
 INSERT INTO dw_fir.Passageiro
 select
@@ -513,7 +513,7 @@ from audit.ins_Endereco e;
 truncate table audit.ins_Endereco;
 
 -- atualização do fato despesa
--- tome nota da quantidade de linhas
+-- tomar nota da quantidade de linhas
 
 select * from dw_fir.FatoDespesa;
 
@@ -554,7 +554,6 @@ from
 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(mn.ManutencaoData as date);
 
 -- MODO 2 - lento, a diferença entre a base OPER e o DW - opção mais pesada
--- (comentado, use só se desconfiar que o MODO 1 perdeu alguma linha)
 
 -- select
 -- 	pg.PagamentoID, 'Pagamento Funcionario', 'Pagamento de salario - ' || f.FuncionarioNome,
@@ -568,17 +567,6 @@ from
 -- SELECT IDOrigemDespesa, TipoDespesa, DescricaoDespesa, ValorDespesa, ValorLiquido, ValorImposto,
 --        ChaveCalendario, ChaveFuncionario, ChaveVeiculo
 -- FROM dw_fir.FatoDespesa WHERE TipoDespesa='Pagamento Funcionario';
-
-/****
-
-Se não vier nada, conferir se as tabelas de staging correspondem ao conteúdo incremental.
-
-Usando o MODO 1, depois que você carregou as novas transações, pode truncar as tabelas.
-
-Observe que num sistema em produção você teria que programar a limpeza das tabelas de audit
-para ocorrer com o sistema fora do ar.
-
-*****/
 
 truncate table audit.ins_PagamentoFuncionario;
 truncate table audit.ins_Manutencao;
@@ -748,9 +736,3 @@ select * from dw_fir.FatoDespesas;
 select * from dw_fir.FatoReceitas;
 select * from dw_fir.FatoRotas;
 select * from dw_fir.FatoSugestoes;
-
-/******
-
-Partir para a parte de dashboard no excel
-
-******/

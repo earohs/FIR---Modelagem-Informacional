@@ -4,17 +4,23 @@ create schema dw_fir;
 
 set search_path=dw_fir;
 
-
 CREATE TABLE Funcionario
 (
   ChaveFuncionario VARCHAR NOT NULL,
   IDFuncionario INT NOT NULL,
-  NomeFuncionario VARCHAR NOT NULL,
-  CategoriaFuncionario VARCHAR NOT NULL,
-  SalarioFuncionario money NOT NULL,
-  CNHMotorista VARCHAR,
-  CategoriaCNHMotorista VARCHAR,
-  PRIMARY KEY (ChaveFuncionario)
+  NomeFuncionario VARCHAR NOT NULL,          -- Tipo 1
+  CategoriaFuncionario VARCHAR NOT NULL,     -- Tipo 2
+  SalarioFuncionario money NOT NULL,         -- Tipo 2
+  CNHMotorista VARCHAR,                      -- Tipo 1
+  CategoriaCNHMotorista VARCHAR,             -- Tipo 1
+  VersaoFuncionario INT NOT NULL,
+  DataInicioFuncionario DATE NOT NULL,
+  DataFimFuncionario DATE,
+  CorrenteFuncionario CHAR(1) NOT NULL,
+  PRIMARY KEY (ChaveFuncionario),
+  UNIQUE (IDFuncionario, VersaoFuncionario),
+  CHECK (CorrenteFuncionario in ('S','N')),
+  CHECK (DataFimFuncionario is null or DataFimFuncionario >= DataInicioFuncionario)
 );
 
 CREATE TABLE Veiculo

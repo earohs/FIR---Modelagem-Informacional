@@ -1,21 +1,4 @@
-/************************************************************            
-						ATENÇÃO!
-Por favor, leia cuidadosamente todo o código antes de executá-lo.
-
-1. Rode o script em partes e valide cada ponto.
-2. Leia as referências passadas como comentários.
-
-************************************************************/
-/*****
-
-Rode apenas depois de rodar os scripts:
-
-DDL_oper_FIR_PT_BR.sql   (cria oper_fir e já popula com dados de exemplo)
-DW_FIR_PT_BR.sql         (cria dw_fir)
-
-Siga atentamente os passos abaixo.
-
-*****/
+\encoding UTF8
 
 set search_path=dw_fir;
 
@@ -91,6 +74,9 @@ from
 	oper_fir.Passageiro p;
 
 \echo Carga da dimensao Endereco
+--- agora enriquecida com a populacao do municipio (IBGE), vinda da zona curated do lake
+--- LEFT JOIN: endereco de municipio que nao esta no arquivo do IBGE entra mesmo assim,
+--- com os atributos externos nulos e PorteMunicipio = 'Nao informado'
 
 INSERT INTO dw_fir.Endereco
 select
@@ -100,12 +86,19 @@ select
 	e.EnderecoLogradouro,
 	e.EnderecoMunicipio,
 	e.EnderecoUF,
-	e.EnderecoPontoReferencia
+	e.EnderecoPontoReferencia,
+	ibge.CodigoMunicipioIBGE,
+	ibge.PopulacaoResidente,
+	ibge.AnoReferencia,
+	dw_fir.porte_municipio(ibge.PopulacaoResidente)
 from
-	oper_fir.Endereco e;
+	oper_fir.Endereco e
+	left join lake_ibge.curated_populacao_municipio ibge
+		on ibge.ChaveMunicipio = lake_ibge.chave_municipio(e.EnderecoMunicipio, e.EnderecoUF);
 
-\echo Carga do calendario - junta as datas de todas as tabelas que tem data/hora
-\echo carrega apenas as datas novas, mesma logica usada para o calendario da ZAGI
+\echo Carga do calendario 
+-- junta as datas de todas as tabelas que tem data/hora
+-- carrega apenas as datas novas, mesma logica usada para o calendario da ZAGI
 
 insert into dw_fir.Calendario
 select
@@ -136,8 +129,9 @@ from (
 	where cast(dt as date) not in (select DataCompleta from dw_fir.Calendario)
 	) as a;
 
-\echo Fato Despesa - une pagamento de funcionario e manutencao de veiculo
-\echo repare no LEFT JOIN dos dois lados: cada linha só preenche funcionario OU veiculo
+\echo Fato Despesa 
+-- une pagamento de funcionario e manutencao de veiculo
+-- LEFT JOIN dos dois lados: cada linha só preenche funcionario OU veiculo
 
 
 INSERT INTO dw_fir.FatoDespesa
@@ -172,9 +166,9 @@ from
 	oper_fir.Manutencao mn inner join dw_fir.Veiculo dwv on dwv.IDVeiculo=mn.VeiculoID
 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(mn.ManutencaoData as date);
 
-\echo Fato Receita Passagem - 1 linha por passageiro embarcado em uma rota
-\echo StatusRota calculado com subquery correlacionada em oper_fir.AvisoRota
-\echo o motorista tambem entra pela versao vigente na data de inicio da rota
+\echo Fato Receita Passagem
+-- StatusRota calculado com subquery correlacionada em oper_fir.AvisoRota
+-- o motorista tambem entra pela versao vigente na data de inicio da rota
 
 INSERT INTO dw_fir.FatoReceitaPassagem
 select
@@ -207,8 +201,9 @@ from
 	inner join dw_fir.Endereco dwed on dwed.IDEndereco=r.EnderecoDestinoID
 	inner join dw_fir.Calendario dwcal on dwcal.DataCompleta=cast(rp.RotaPassageiroDataPagamento as date);
 
-\echo Fato Rota - 1 linha por rota, com contagem de passageiros e de avisos
-\echo agregados em subquery, igual ao espirito das agregacoes feitas na Vendas
+\echo Fato Rota 
+-- 1 linha por rota, com contagem de passageiros e de avisos
+-- agregados em subquery, igual ideia das agregacoes feitas na Vendas
 
 INSERT INTO dw_fir.FatoRota
 select
@@ -268,8 +263,13 @@ from
 	inner join dw_fir.Calendario dwcalprev on dwcalprev.DataCompleta=cast(s.SugestaoDataPrevista as date)
 	inner join dw_fir.Calendario dwcalreg on dwcalreg.DataCompleta=cast(s.SugestaoDataRegistro as date);
 
----- validando ....
 
+select count(*) as enderecos_origem from oper_fir.Endereco;
+select count(*) as enderecos_no_dw from dw_fir.Endereco;
+
+-- enderecos que ficaram SEM populacao (municipio ausente no arquivo do IBGE ou grafia diferente):
+
+select IDEndereco, MunicipioEndereco, UFEndereco from dw_fir.Endereco where PopulacaoMunicipio is null;
 
 select count(*) as despesas from dw_fir.FatoDespesa;
 select count(*) as receitas from dw_fir.FatoReceitaPassagem;

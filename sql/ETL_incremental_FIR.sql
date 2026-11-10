@@ -2,9 +2,9 @@
 
 PARTE INCREMENTAL
 
-https://bryteflow.com/postgres-cdc-6-easy-methods-capture-data-changes/#:~:text=5.,%2DAhead%20Log%20(WAL).
-
-****/
+Rode este script com o psql na mesma pasta do arquivo silver_populacao_municipio_v2.csv,
+exportado pelo notebook FIR_data_lake_python.ipynb.
+*****/
 
 Drop schema if exists audit cascade;
 create schema audit;
@@ -432,6 +432,8 @@ DROP TRIGGER Funcionario_update_trg on oper_fir.Funcionario;
 
 -- vamos registrar uma nova manutencao, um novo pagamento e uma rota nova
 -- com um passageiro embarcado
+-- (a rota nova e localizada por motorista + data de inicio, e nao mais pelo RotaID=3,
+--  porque o DML agora traz dezenas de rotas e o proximo ID deixou de ser 3)
 
 /*
 Veiculo
@@ -460,13 +462,15 @@ WHERE NOT EXISTS (
 INSERT INTO oper_fir.Rota (VeiculoID,MotoristaID,EnderecoOrigemID,EnderecoDestinoID,RotaInicio,RotaFim,RotaValorPassagem)
 SELECT 1,2,1,3,'2025-07-11 07:00-03','2025-07-11 08:05-03',15.00
 WHERE NOT EXISTS (
-  SELECT 1 FROM oper_fir.Rota WHERE RotaID=3
+  SELECT 1 FROM oper_fir.Rota WHERE MotoristaID=2 AND RotaInicio='2025-07-11 07:00-03'
 );
 
 INSERT INTO oper_fir.RotaPassageiro (RotaID,PassageiroID,RotaPassageiroValorPago,RotaPassageiroDataPagamento)
-SELECT 3,1,15.00,'2025-07-11 07:02-03'
-WHERE NOT EXISTS (
-  SELECT 1 FROM oper_fir.RotaPassageiro WHERE RotaID=3 AND PassageiroID=1
+SELECT r.RotaID,1,15.00,'2025-07-11 07:02-03'
+FROM oper_fir.Rota r
+WHERE r.MotoristaID=2 AND r.RotaInicio='2025-07-11 07:00-03'
+  AND NOT EXISTS (
+  SELECT 1 FROM oper_fir.RotaPassageiro rp WHERE rp.RotaID=r.RotaID AND rp.PassageiroID=1
 );
 
 -- Cliente novo - exemplo de dimensao (Passageiro, no caso da FIR)
@@ -474,9 +478,23 @@ WHERE NOT EXISTS (
 INSERT INTO oper_fir.Passageiro (PassageiroNome,PassageiroCPF,PassageiroDataNascimento,PassageiroFormaPagamento)
 VALUES ('Manuela Prado','66666666666','1995-03-20','DEBITO');
 
+-- Enderecos novos para exemplificar o atributo externo do IBGE:
+--  (a) Niteroi esta na silver da carga inicial -> o endereco ja nasce com a populacao
+--  (b) Petropolis NAO esta nessa silver        -> nasce com atributos nulos e porte 'Nao informado';
+--      a atualizacao do atributo externo (mais abaixo, com a silver v2) preenche depois
+-- (idempotente: so insere se o CEP ainda nao existe)
+
+INSERT INTO oper_fir.Endereco (EnderecoCEP,EnderecoLogradouro,EnderecoNumero,EnderecoMunicipio,EnderecoUF,EnderecoPontoReferencia)
+SELECT '24020000','Rua da Conceicao','100','Niteroi','RJ','Centro de Niteroi'
+WHERE NOT EXISTS (SELECT 1 FROM oper_fir.Endereco WHERE EnderecoCEP='24020000');
+
+INSERT INTO oper_fir.Endereco (EnderecoCEP,EnderecoLogradouro,EnderecoNumero,EnderecoMunicipio,EnderecoUF,EnderecoPontoReferencia)
+SELECT '25610010','Rua do Imperador','500','Petropolis','RJ','Centro'
+WHERE NOT EXISTS (SELECT 1 FROM oper_fir.Endereco WHERE EnderecoCEP='25610010');
+
 
 /***************************************************************************
-MUDANCAS QUE EXERCITAM O SCD TIPO 2
+MUDANCAS QUE EXEMPLIFICAM O SCD TIPO 2
 
  (a) Bruno Lima (2) recebe aumento: 3800 -> 4560. Muda SalarioFuncionario.
  (b) Carla Dias (3) sai da direcao e vai para o setor administrativo.
@@ -576,15 +594,11 @@ DIMENSAO FUNCIONARIO - SCD TIPO 2 em 3 passos
   PASSO 1  funcionario NOVO       -> entra como versao 1, corrente
   PASSO 2  funcionario ALTERADO   -> abre versao N+1 e fecha a versao N
   PASSO 3  atributos Tipo 1       -> sobrescreve em TODAS as versoes
-
-A ordem importa: o passo 2 le a versao corrente para descobrir de qual
-numero partir, entao ele tem que rodar depois do passo 1 (senao um
-funcionario recem-inserido e alterado no mesmo ciclo nao acharia a versao 1).
 ***************************************************************************/
 
-\echo PASSO 1 - funcionarios novos entram como versao 1
-\echo DataInicio = 1900-01-01, a mesma sentinela da carga inicial, para que um
-\echo fato com data anterior ao cadastro ainda encontre a versao 1 no join
+--- PASSO 1 - funcionarios novos entram como versao 1
+--- DataInicio = 1900-01-01, a mesma sentinela da carga inicial, para que um
+--- fato com data anterior ao cadastro ainda encontre a versao 1 no join
 
 INSERT INTO dw_fir.Funcionario
 select
@@ -604,12 +618,12 @@ from
 
 truncate table audit.ins_Funcionario;
 
-\echo PASSO 2 - abre a nova versao para quem teve Salario ou Categoria alterados
-\echo o DISTINCT ON garante que, se o funcionario foi alterado varias vezes no
-\echo mesmo ciclo, so a ultima situacao vire versao (o DW nao precisa guardar
-\echo os estados intermediarios de um mesmo lote)
-\echo o WHERE compara o valor novo com o da versao corrente: um UPDATE que nao
-\echo mexeu em nenhum dos dois atributos Tipo 2 nao pode gerar versao nova
+--- PASSO 2 - abre a nova versao para quem teve Salario ou Categoria alterados
+--- o DISTINCT ON garante que, se o funcionario foi alterado varias vezes no
+--- mesmo ciclo, so a ultima situacao vire versao (o DW nao precisa guardar
+--- os estados intermediarios de um mesmo lote)
+--- o WHERE compara o valor novo com o da versao corrente: um UPDATE que nao
+--- mexeu em nenhum dos dois atributos Tipo 2 nao pode gerar versao nova
 
 INSERT INTO dw_fir.Funcionario
 select
@@ -639,9 +653,9 @@ where
 	m.FuncionarioSalario <> dwf.SalarioFuncionario
 	or m.CategoriaNova <> dwf.CategoriaFuncionario;
 
-\echo PASSO 2b - fecha a versao anterior de quem acabou de ganhar versao nova
-\echo vigencia em intervalo semiaberto: DataFim da versao antiga = DataInicio da
-\echo nova, sem sobreposicao e sem buraco entre as duas
+--- PASSO 2b - fecha a versao anterior de quem acabou de ganhar versao nova
+--- vigencia em intervalo semiaberto: DataFim da versao antiga = DataInicio da
+--- nova, sem sobreposicao e sem buraco entre as duas
 
 update dw_fir.Funcionario ant
 set
@@ -654,8 +668,8 @@ where
 	and nova.VersaoFuncionario = ant.VersaoFuncionario + 1
 	and ant.CorrenteFuncionario = 'S';
 
-\echo PASSO 3 - atributos Tipo 1 sobrescrevem TODAS as versoes do funcionario
-\echo e aqui que Nome e CNH sao corrigidos; repare que nenhuma versao e criada
+--- PASSO 3 - atributos Tipo 1 sobrescrevem TODAS as versoes do funcionario
+--- e aqui que Nome e CNH sao corrigidos; repare que nenhuma versao e criada
 
 update dw_fir.Funcionario dwf
 set
@@ -669,9 +683,6 @@ where
 	and dwf.IDFuncionario in (select FuncionarioID from audit.upd_Funcionario);
 
 truncate table audit.upd_Funcionario;
-
-\echo confira o resultado do SCD2 - Bruno (2) e Carla (3) devem ter 2 versoes,
-\echo a antiga com CorrenteFuncionario='N' e DataFim preenchida
 
 select
 	IDFuncionario, NomeFuncionario, CategoriaFuncionario, SalarioFuncionario,
@@ -688,12 +699,86 @@ from audit.ins_Veiculo v;
 
 truncate table audit.ins_Veiculo;
 
+-- Endereco novo ja entra enriquecido com a populacao do municipio (silver importada do lake em Python)
+
 INSERT INTO dw_fir.Endereco
 select gen_random_uuid(), e.EnderecoID, e.EnderecoCEP, e.EnderecoLogradouro,
-       e.EnderecoMunicipio, e.EnderecoUF, e.EnderecoPontoReferencia
-from audit.ins_Endereco e;
+       e.EnderecoMunicipio, e.EnderecoUF, e.EnderecoPontoReferencia,
+       ibge.CodigoMunicipioIBGE, ibge.PopulacaoResidente, ibge.AnoReferencia,
+       dw_fir.porte_municipio(ibge.PopulacaoResidente)
+from audit.ins_Endereco e
+	left join lake_ibge.curated_populacao_municipio ibge
+		on ibge.ChaveMunicipio = lake_ibge.chave_municipio(e.EnderecoMunicipio, e.EnderecoUF);
 
 truncate table audit.ins_Endereco;
+
+/***************************************************************************
+ATUALIZACAO DO ATRIBUTO EXTERNO (IBGE) - Tipo 1
+
+A fonte externa muda num ritmo proprio, diferente do OLTP da FIR (o IBGE publica
+estimativas todo ano e um Censo a cada 10 anos). Por isso este passo e separado
+da carga de enderecos novos.
+
+O data lake (bronze e silver) agora e processado no notebook em Python. Quando chega
+uma versao nova do IBGE, o fluxo e:
+
+  1. BRONZE   (notebook) - novo arquivo e ANEXADO na bronze (nunca sobrescrita)
+  2. SILVER   (notebook) - reconstruida; fica com a versao mais recente de cada municipio;
+                           exportada para CSV (silver_populacao_municipio_v2.csv)
+  3. CURATED  (aqui)     - a tabela lake_ibge.curated_populacao_municipio e recarregada
+                           com o CSV exportado (TRUNCATE + copia do CSV)
+  4. DW       (aqui)     - UPDATE em TODAS as linhas de Endereco do municipio (Tipo 1:
+                           sobrescreve; nenhuma versao nova e criada)
+
+Neste exemplo o arquivo v2 simula uma republicacao do IBGE: Nova Iguacu muda de populacao
+(valor ILUSTRATIVO, so para demonstrar o Tipo 1) e Petropolis passa a constar na fonte.
+***************************************************************************/
+
+--- PASSO 1 - recarrega a zona CURATED com a silver exportada do notebook
+
+truncate table lake_ibge.curated_populacao_municipio;
+
+\copy lake_ibge.curated_populacao_municipio (CodigoMunicipioIBGE, NomeMunicipio, UF, PopulacaoResidente, AnoReferencia, ChaveMunicipio, DataIngestao) from 'silver_populacao_municipio_v2.csv' with (format csv, header true, encoding 'UTF8')
+
+update lake_ibge.catalogo_dados
+set
+	UltimaImportacao = current_timestamp,
+	ArquivoOrigem = 'silver_populacao_municipio_v2.csv',
+	QtdLinhasSilver = (select count(*) from lake_ibge.curated_populacao_municipio)
+where NomeDataset = 'populacao_municipio';
+
+--- PASSO 2 - confere a consistencia da chave (Python x SQL; esperado: 0 linhas)
+
+select CodigoMunicipioIBGE, NomeMunicipio, ChaveMunicipio
+from lake_ibge.curated_populacao_municipio
+where ChaveMunicipio is distinct from lake_ibge.chave_municipio(NomeMunicipio, UF);
+
+--- PASSO 3 - sobrescreve (Tipo 1) os atributos externos em todos os enderecos do municipio
+--- o WHERE evita reescrever linha que ja esta igual
+
+update dw_fir.Endereco e
+set
+	CodigoIBGEMunicipio = c.CodigoMunicipioIBGE,
+	PopulacaoMunicipio = c.PopulacaoResidente,
+	AnoPopulacaoMunicipio = c.AnoReferencia,
+	PorteMunicipio = dw_fir.porte_municipio(c.PopulacaoResidente)
+from
+	lake_ibge.curated_populacao_municipio c
+where
+	c.ChaveMunicipio = lake_ibge.chave_municipio(e.MunicipioEndereco, e.UFEndereco)
+	and (e.CodigoIBGEMunicipio is distinct from c.CodigoMunicipioIBGE
+	  or e.PopulacaoMunicipio is distinct from c.PopulacaoResidente
+	  or e.AnoPopulacaoMunicipio is distinct from c.AnoReferencia);
+
+-- conferencia - enderecos sem populacao (esperado: nenhum, pois Petropolis passou a constar na silver v2):
+
+select IDEndereco, MunicipioEndereco, UFEndereco, PorteMunicipio
+from dw_fir.Endereco where PopulacaoMunicipio is null;
+
+-- conferencia - todos os enderecos de um mesmo municipio devem ter a mesma populacao:
+
+select MunicipioEndereco, UFEndereco, count(*) as enderecos, count(distinct PopulacaoMunicipio) as populacoes_distintas
+from dw_fir.Endereco group by MunicipioEndereco, UFEndereco order by 1;
 
 -- atualização do fato despesa
 -- tome nota da quantidade de linhas
@@ -897,18 +982,18 @@ truncate table audit.ins_SugestaoRota;
 VALIDACOES DO SCD TIPO 2 - rode sempre depois do incremental
 ******/
 
-\echo (1) nenhum funcionario pode ter mais de uma versao corrente:
+-- (1) nenhum funcionario pode ter mais de uma versao corrente:
 
 select IDFuncionario, count(*) from dw_fir.Funcionario
 where CorrenteFuncionario='S' group by IDFuncionario having count(*) > 1;
 
-\echo (2) nenhuma versao corrente pode ter DataFim preenchida, e vice-versa:
+-- (2) nenhuma versao corrente pode ter DataFim preenchida, e vice-versa:
 
 select IDFuncionario, VersaoFuncionario from dw_fir.Funcionario
 where (CorrenteFuncionario='S' and DataFimFuncionario is not null)
    or (CorrenteFuncionario='N' and DataFimFuncionario is null);
 
-\echo (3) as vigencias de um mesmo funcionario nao podem se sobrepor:
+-- (3) as vigencias de um mesmo funcionario nao podem se sobrepor:
 
 select a.IDFuncionario, a.VersaoFuncionario, b.VersaoFuncionario
 from dw_fir.Funcionario a inner join dw_fir.Funcionario b
@@ -917,12 +1002,12 @@ where
 	b.DataInicioFuncionario < coalesce(a.DataFimFuncionario, cast('9999-12-31' as date))
 	and a.DataInicioFuncionario < coalesce(b.DataFimFuncionario, cast('9999-12-31' as date));
 
-\echo (4) nenhum pagamento pode ter duplicado por causa do join de vigencia:
+-- (4) nenhum pagamento pode ter duplicado por causa do join de vigencia:
 
 select count(*) as pagamentos_origem from oper_fir.PagamentoFuncionario;
 select count(*) as pagamentos_no_fato from dw_fir.FatoDespesa where TipoDespesa='Pagamento Funcionario';
 
-\echo (5) cada pagamento tem que apontar para a versao com o salario da epoca:
+-- (5) cada pagamento tem que apontar para a versao com o salario da epoca:
 
 select
 	fd.IDOrigemDespesa, c.DataCompleta as data_pagamento, fd.ValorLiquido as valor_pago,
@@ -955,7 +1040,9 @@ select
 	p.NomePassageiro, p.FormaPagamentoPassageiro,
 	f.NomeFuncionario as NomeMotorista, f.VersaoFuncionario as VersaoMotorista,
 	v.PlacaVeiculo,
-	eo.MunicipioEndereco as MunicipioOrigem, ed.MunicipioEndereco as MunicipioDestino
+	eo.MunicipioEndereco as MunicipioOrigem, ed.MunicipioEndereco as MunicipioDestino,
+	eo.PopulacaoMunicipio as PopulacaoOrigem, eo.PorteMunicipio as PorteOrigem,
+	ed.PopulacaoMunicipio as PopulacaoDestino, ed.PorteMunicipio as PorteDestino
 from
 	dw_fir.FatoReceitaPassagem fr inner join dw_fir.Calendario c on c.ChaveCalendario=fr.ChaveCalendario
 	inner join dw_fir.Passageiro p on p.ChavePassageiro=fr.ChavePassageiro
@@ -981,33 +1068,64 @@ select
 	fs.TipoSugestao, fs.HoraPrevista,
 	c.Ano, c.DataCompleta,
 	p.NomePassageiro,
-	e.MunicipioEndereco, e.UFEndereco
+	e.MunicipioEndereco, e.UFEndereco,
+	e.CodigoIBGEMunicipio, e.PopulacaoMunicipio, e.PorteMunicipio
 from
 	dw_fir.FatoSugestaoRota fs inner join dw_fir.Calendario c on c.ChaveCalendario=fs.ChaveCalendarioPrevista
 	inner join dw_fir.Passageiro p on p.ChavePassageiro=fs.ChavePassageiro
 	inner join dw_fir.Endereco e on e.ChaveEndereco=fs.ChaveEndereco;
 
+/*****
+NOVA VISAO - PenetracaoMunicipio (1 linha por municipio)
+
+Cruza o que a FIR faz (embarques, receita, sugestoes de rota) com o tamanho do mercado
+(populacao do IBGE).
+*****/
+
+create or replace view dw_fir.PenetracaoMunicipio as
+with mun as (
+	select
+		MunicipioEndereco, UFEndereco,
+		max(CodigoIBGEMunicipio) as CodigoIBGEMunicipio,
+		max(PopulacaoMunicipio) as PopulacaoMunicipio,
+		max(AnoPopulacaoMunicipio) as AnoPopulacaoMunicipio,
+		max(PorteMunicipio) as PorteMunicipio
+	from dw_fir.Endereco
+	group by MunicipioEndereco, UFEndereco
+),
+receita as (
+	select
+		eo.MunicipioEndereco, eo.UFEndereco,
+		count(*) as QtdEmbarquesOrigem,
+		sum(fr.ValorPago)::numeric as ReceitaOrigem
+	from dw_fir.FatoReceitaPassagem fr
+		inner join dw_fir.Endereco eo on eo.ChaveEndereco=fr.ChaveEnderecoOrigem
+	group by eo.MunicipioEndereco, eo.UFEndereco
+),
+sugestoes as (
+	select
+		e.MunicipioEndereco, e.UFEndereco,
+		count(*) as QtdSugestoes
+	from dw_fir.FatoSugestaoRota fs
+		inner join dw_fir.Endereco e on e.ChaveEndereco=fs.ChaveEndereco
+	group by e.MunicipioEndereco, e.UFEndereco
+)
+select
+	mun.MunicipioEndereco, mun.UFEndereco,
+	mun.CodigoIBGEMunicipio, mun.PopulacaoMunicipio, mun.AnoPopulacaoMunicipio, mun.PorteMunicipio,
+	coalesce(r.QtdEmbarquesOrigem,0) as QtdEmbarquesOrigem,
+	coalesce(r.ReceitaOrigem,0) as ReceitaOrigem,
+	coalesce(s.QtdSugestoes,0) as QtdSugestoes,
+	round(coalesce(r.ReceitaOrigem,0) / nullif(mun.PopulacaoMunicipio,0) * 100000, 2) as ReceitaPor100milHab,
+	round(coalesce(r.QtdEmbarquesOrigem,0)::numeric / nullif(mun.PopulacaoMunicipio,0) * 100000, 2) as EmbarquesPor100milHab,
+	round(coalesce(s.QtdSugestoes,0)::numeric / nullif(mun.PopulacaoMunicipio,0) * 100000, 2) as SugestoesPor100milHab
+from
+	mun
+	left join receita r on r.MunicipioEndereco=mun.MunicipioEndereco and r.UFEndereco=mun.UFEndereco
+	left join sugestoes s on s.MunicipioEndereco=mun.MunicipioEndereco and s.UFEndereco=mun.UFEndereco;
+
 select * from dw_fir.FatoDespesas;
 select * from dw_fir.FatoReceitas;
 select * from dw_fir.FatoRotas;
 select * from dw_fir.FatoSugestoes;
-
-/*****
-ATENCAO AO MONTAR O DASHBOARD NO EXCEL
-
-Como NomeMotorista agora pode aparecer em mais de uma versao, uma tabela
-dinamica que agrupe por NomeFuncionario continua funcionando (o Tipo 1 mantem
-o nome igual em todas as versoes), mas uma que agrupe por SalarioFuncionario
-vai mostrar o Bruno em duas linhas - uma por faixa salarial. Isso e o
-comportamento correto do Tipo 2, nao um erro de modelagem.
-
-Para contagens de cadastro ("quantos funcionarios a FIR tem"), use a visao
-dw_fir.FuncionarioCorrente, criada no DW_FIR_PT_BR.sql, em vez da dimensao
-inteira - senao o mesmo funcionario e contado uma vez por versao.
-*****/
-
-/******
-
-Partir para a parte de dashboard no excel
-
-******/
+select * from dw_fir.PenetracaoMunicipio;

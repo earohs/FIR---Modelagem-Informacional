@@ -1,3 +1,4 @@
+\encoding UTF8
 
 drop schema if exists dw_fir cascade;
 create schema dw_fir;
@@ -57,8 +58,24 @@ CREATE TABLE Endereco
   MunicipioEndereco VARCHAR NOT NULL,
   UFEndereco VARCHAR NOT NULL,
   PontoReferenciaEndereco VARCHAR,
+  -- NOVOS ATRIBUTOS (fonte externa e publica: IBGE, via lake_ibge) - Tipo 1
+  CodigoIBGEMunicipio VARCHAR,       -- codigo de 7 digitos do municipio no IBGE
+  PopulacaoMunicipio INT,            -- populacao residente do municipio
+  AnoPopulacaoMunicipio INT,         -- ano de referencia da populacao (ex.: 2022 = Censo)
+  PorteMunicipio VARCHAR,            -- derivado da populacao
   PRIMARY KEY (ChaveEndereco)
 );
+
+-- Classificacao derivada: transforma a populacao em faixa, para filtrar no dashboard
+-- sem somar populacao por engano (a populacao se repete em cada endereco do municipio).
+create or replace function dw_fir.porte_municipio(populacao int) returns varchar as $$
+	select case
+		when populacao is null then 'Nao informado'
+		when populacao < 100000 then 'Pequeno (ate 100 mil)'
+		when populacao <= 500000 then 'Medio (100 a 500 mil)'
+		else 'Grande (acima de 500 mil)'
+	end;
+$$ language sql immutable;
 
 CREATE TABLE Calendario
 (

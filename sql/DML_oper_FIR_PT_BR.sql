@@ -1,3 +1,4 @@
+\encoding UTF8
 /*****
 
 DML insert FIR PT BR.sql
